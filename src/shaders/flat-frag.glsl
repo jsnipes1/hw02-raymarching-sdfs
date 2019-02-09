@@ -9,6 +9,12 @@ in vec2 fs_Pos;
 out vec4 out_Col;
 
 // Concept: Bouncing balls with various shaders (lambert, dielectric, normals)
+  // Requirements:
+    // BVH
+    // Intersection, subtraction, smooth blend -- combine all in one object
+    // Easing function x 1 -- use in background shading
+    // Noise -- use in background shading
+    // dat.GUI x 2 (Number of balls, coeff of restitution)
 
 struct Ball {
   vec4 baseColor;
@@ -21,6 +27,10 @@ struct Ray {
   vec3 origin;
   vec3 direction;
 };
+
+float hash1D(float x) {
+  return fract(sin(x * 1324623.13274867) * 356211.532);
+}
 
 // From Mariano's github
 float hash3D(vec3 x) {
@@ -53,6 +63,10 @@ float sphereSDF(vec3 p, vec3 c, float r) {
   return length(p - c) - r;
 }
 
+float floorSDF(vec3 p, vec4 n) {
+  return dot(p, n.xyz) + n.w;
+}
+
 // Compute log base <base> of <arg>
 float logBase(float arg, float base) {
   return log(arg) / log(base);
@@ -61,14 +75,16 @@ float logBase(float arg, float base) {
 // Explicit function for a bounce; xi must be in [0, 1]
   // Source: https://physics.stackexchange.com/questions/245791/explicit-function-for-bouncing-ball
 float bounce(float t, float xi, float v0, float y0) {
-  // Assume y(0) = 0, yDot(0) = v0, g = 1
-  t /= 30.0;
+  // Slow down time to make bouncing last longer
+  t /= 24.0;
 
+  // Assume y(0) = y0, yDot(0) = v0, g = 1
   float logBaseXi = logBase(t * (xi - 1.0) / (2.0 * v0) + 1.0, xi);
   float k = floor(logBaseXi);
   float a = t - 2.0 * v0 * (pow(xi, k) - 1.0) / (xi - 1.0);
   float y = (v0 * pow(xi, k) * a - 0.5 * a * a + y0);
 
+  // Let the balls settle near their starting position
   if (y - y0 < 0.001) {
     return y0;
   }
@@ -77,12 +93,19 @@ float bounce(float t, float xi, float v0, float y0) {
 
 // Compute a surface normal
   // Source: http://jamie-wong.com/2016/07/15/ray-marching-signed-distance-functions/
-vec3 surfaceNormal(vec3 p, vec3 c, float r) {
+vec3 surfaceNormal(vec3 p, vec3 c, float r, vec4 floorNorm, int sdfToCall) {
   float e = 0.001;
   vec3 n;
-  n.x = sphereSDF(vec3(p.x + e, p.y, p.z), c, r) - sphereSDF(vec3(p.x - e, p.y, p.z), c, r);
-  n.y = sphereSDF(vec3(p.x, p.y + e, p.z), c, r) - sphereSDF(vec3(p.x, p.y - e, p.z), c, r);
-  n.z = sphereSDF(vec3(p.x, p.y, p.z + e), c, r) - sphereSDF(vec3(p.x, p.y, p.z - e), c, r);
+  if (sdfToCall == 0) {
+    n.x = sphereSDF(vec3(p.x + e, p.y, p.z), c, r) - sphereSDF(vec3(p.x - e, p.y, p.z), c, r);
+    n.y = sphereSDF(vec3(p.x, p.y + e, p.z), c, r) - sphereSDF(vec3(p.x, p.y - e, p.z), c, r);
+    n.z = sphereSDF(vec3(p.x, p.y, p.z + e), c, r) - sphereSDF(vec3(p.x, p.y, p.z - e), c, r);
+  }
+  else if (sdfToCall == 1) {
+    n.x = floorSDF(vec3(p.x + e, p.y, p.z), floorNorm) - floorSDF(vec3(p.x - e, p.y, p.z), floorNorm);
+    n.y = floorSDF(vec3(p.x, p.y + e, p.z), floorNorm) - floorSDF(vec3(p.x, p.y - e, p.z), floorNorm);
+    n.z = floorSDF(vec3(p.x, p.y, p.z + e), floorNorm) - floorSDF(vec3(p.x, p.y, p.z - e), floorNorm);
+  }
   return normalize(n);
 }
 
@@ -99,30 +122,61 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
   for (int i = 0; i < maxIterations; ++i) {
     vec3 p = pointOnRay(r, depth);
 
+    // Find closest SDF
     float minDist = 100000000.0;
     int idx = 0;
+    float shiftedY = 0.0;
+    float shiftedX = 0.0;
     for (int j = 0; j < balls.length(); ++j) {
       Ball b = balls[j];
-      vec3 cen = b.center;
-      b.center.y = bounce(t, 0.5, 4.0, cen.y);
+
+      // Offset time so the bounces are jittered
+      float tOffset = hash1D(float(j)) * 100.0;
+
+      // Compute bounce height and horizontal move
+      b.center.y = bounce(t + tOffset, 0.99, 4.0, b.size);
+      // Reset x using mod to make the balls appear infinite
+      b.center.x = mod((t + tOffset) / 60.0, 4.0);
+
       float currDist = opUnion(minDist, sphereSDF(p, b.center, b.size));
       if (currDist < minDist) {
         minDist = currDist;
         idx = j;
+
+        shiftedX = b.center.x;
+        shiftedY = b.center.y;
       }
     }
 
-    // Euclidean distance to the shape
+    // To be passed to the surfaceNormal() function; identifies which SDF to call
+    int sdfID = 0;
+
     Ball b = balls[idx];
+
+    // Check distance to floor separately
+    vec4 nFloor = normalize(vec4(0.0, 1.0, 0.0, 0.0));
+    float toFloor = floorSDF(p, nFloor);
+    if (toFloor < minDist) {
+      shiftedX = 0.0;
+      shiftedY = 0.0;
+      minDist = toFloor;
+      sdfID = 1;
+    }
+
+    // Move the ball as calculated above
+    b.center.x = shiftedX;
+    b.center.y = shiftedY;
+
+    // Euclidean distance to the shape
     float toShape = minDist;
 
     // We're inside the shape, so the ray hit it; return color of shape + shading
     if (abs(toShape) <= 0.01) {
       // Lambert (applied to all shapes)
-      vec3 nHat = surfaceNormal(p, b.center, b.size);
-      vec3 lHat = normalize(vec3(1.0, 1.0, -1.0));
-      float intensity = 1.0;
-      vec4 color = b.baseColor;
+      vec3 nHat = surfaceNormal(p, b.center, b.size, nFloor, sdfID);
+      vec3 lHat = normalize(vec3(1.0, 1.0, -1.0)); // Light vector
+      float intensity = 2.0;
+      vec4 color = b.baseColor; // Makes a Voronoi diagram on the floor plane!
       float dProd = max(dot(lHat, nHat), 0.0);
       color = vec4(vec3(dProd), 1.0) * color * intensity;
 
@@ -138,8 +192,11 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
       else if (b.reflectionModel == 2) {
         // Surface normals
         color = vec4(0.5 * (nHat + vec3(1.0)), 1.0);
+        // Diversify the floor colors
+        if (sdfID == 1) {
+          color *= vec4(normalize(float(idx) * 2.0 * vec3(b.center.x, 1.0, b.center.z)), 1.0);
+        }
       }
-
       return color;
     }
 
@@ -152,7 +209,7 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
 }
 
 void main() {
-  // From 560's ray casting slides
+  // Basic ray casting (from 560 slides)
   vec3 eyeToRef = u_Ref - u_Eye;
   float len = length(eyeToRef);
   vec3 uLook = normalize(eyeToRef);
@@ -167,19 +224,20 @@ void main() {
   vec3 p = u_Ref + fs_Pos.x * H + fs_Pos.y * V;
   vec3 dir = normalize(p - u_Eye);
 
-  Ball ballArr[20];
-
-  for (float i = 0.0; i < 20.0; i += 1.0) {
+  // Create bouncing balls
+  const int nBalls = 20;
+  Ball ballArr[nBalls];
+  for (float i = 0.0; i < float(nBalls); i += 1.0) {
     highp int idx = int(i);
-    ballArr[idx] = Ball(vec4(hash3D(vec3(38.324 * i)), hash3D(vec3(10.4924 * i)), hash3D(vec3(102.521 * i)), 1.0),
-                      vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), hash3D(vec3(59.3423 * i))),
+    ballArr[idx] = Ball(vec4(hash3D(vec3(38.324 * i)) + 0.1, hash3D(vec3(10.4924 * i)) + 0.08, hash3D(vec3(102.521 * i)) + 0.1, 1.0),
+                      vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 4.0 * hash3D(vec3(59.3423 * i)) - 2.0),
                       hash3D(vec3(12.53892538 * i * i + 3452.31)) + 0.2,
                       randomShadingModel(vec3(95.3829 * i)));
-    ballArr[idx].center += vec3(-5.0, 0.0, -2.0);
+    ballArr[idx].center += vec3(-2.0, 0.0, -2.0) * 4.0;
     ballArr[idx].size /= 3.0;
   }
 
   // SDF Coloring and motion
   Ray r = Ray(u_Eye, dir);
-  out_Col = raymarch(r, ballArr, 0.001, 40, u_Time);
+  out_Col = raymarch(r, ballArr, 0.001, 150, u_Time);
 }
