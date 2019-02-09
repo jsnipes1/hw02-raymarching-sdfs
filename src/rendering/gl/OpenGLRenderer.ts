@@ -22,9 +22,12 @@ class OpenGLRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
 
-  render(camera: Camera, prog: ShaderProgram, drawables: Array<Drawable>, time: number) {
+  render(camera: Camera, prog: ShaderProgram, drawables: Array<Drawable>, balls: number, bounce: number, time: number) {
     prog.setEyeRefUp(camera.controls.eye, camera.controls.center, camera.controls.up);
     prog.setTime(time);
+
+    prog.setBalls(balls);
+    prog.setBounce(bounce);
 
     for (let drawable of drawables) {
       prog.draw(drawable);

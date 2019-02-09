@@ -4,16 +4,14 @@ precision highp float;
 uniform vec3 u_Eye, u_Ref, u_Up;
 uniform vec2 u_Dimensions;
 uniform float u_Time;
+uniform float u_Balls;
+uniform float u_Bounce;
 
 in vec2 fs_Pos;
 out vec4 out_Col;
 
-// Concept: Bouncing balls with various shaders (lambert, dielectric, normals)
   // Requirements:
-    // BVH
-    // Intersection, subtraction -- combine all in one object
     // Easing function x 1 -- use in background shading
-    // dat.GUI x 2 (Number of balls, coeff of restitution)
 
 // Properties of each ball defined in the scene
 struct Ball {
@@ -210,18 +208,19 @@ vec4 raymarch(Ray r, Ball balls[25], const float start, const int maxIterations,
     int idx = 0;
     float shiftedY = 0.0;
     float shiftedX = 0.0;
-    for (int j = 0; j < balls.length(); ++j) {
+    for (int j = 0; j < 25; ++j) {
       Ball b = balls[j];
 
       // Offset time so the bounces are jittered
       float tOffset = hash1D(float(j)) * 100.0;
 
       // Compute bounce height and horizontal move
-      b.center.y = bounce(t + tOffset, 0.99, 4.0, -b.size);
+      b.center.y = bounce(t + tOffset, u_Bounce, u_Balls, -b.size * 1.5);
       // Reset x using mod to make the balls appear infinite
       b.center.x = mod((t + tOffset) / 20.0, 6.25);
 
       float currDist = opUnion(minDist, sphereSDF(p, b.center, b.size));
+      currDist = opIntersection(opSubtraction(minDist, currDist), currDist);
       if (currDist < minDist) {
         minDist = currDist;
         idx = j;
@@ -316,9 +315,9 @@ void main() {
   vec3 dir = normalize(p - u_Eye);
 
   // Create bouncing balls
-  const int nBalls = 25;
-  Ball ballArr[nBalls];
-  for (float i = 0.0; i < float(nBalls); i += 1.0) {
+  Ball ballArr[25];
+  for (float i = 0.0; i < 25.0; i += 1.0) {
+    // if (i > u_Balls) { break; }
     highp int idx = int(i);
     ballArr[idx] = Ball(vec4(hash3D(vec3(38.324 * i)) + 0.1, hash3D(vec3(10.4924 * i)) + 0.08, hash3D(vec3(102.521 * i)) + 0.1, 1.0),
                         vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 8.0 * hash3D(vec3(59.3423 * i)) - 4.0),
