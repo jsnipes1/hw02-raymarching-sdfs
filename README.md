@@ -4,7 +4,11 @@ Jake Snipes
 PennKey: jsnipes
 
 ## Images
-...
+<img src="img/splat.PNG">
+
+<img src="img/flat.PNG">
+
+<img src="img/shading.PNG">
 
 ## Techniques
 ### Paintballs
