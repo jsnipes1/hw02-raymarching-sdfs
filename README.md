@@ -26,7 +26,7 @@ PennKey: jsnipes
 - The initial speed of the paintballs can be controlled using the "speed" slider; I think 4.0 is a nice choice to see all the effects!
 
 ## Live Demo
-
+http://jacobsnipes.com/hw02-raymarching-sdfs/
 
 ## Resources Used
 All resources are cited as comments in the code where they were used
