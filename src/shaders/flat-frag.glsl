@@ -10,9 +10,6 @@ uniform float u_Bounce;
 in vec2 fs_Pos;
 out vec4 out_Col;
 
-  // Requirements:
-    // Easing function x 1 -- use in background shading
-
 // Properties of each ball defined in the scene
 struct Ball {
   vec4 baseColor;
