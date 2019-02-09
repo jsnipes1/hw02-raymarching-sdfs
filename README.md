@@ -4,11 +4,14 @@ Jake Snipes
 PennKey: jsnipes
 
 ## Images
-<img src="img/splat.PNG">
+<img src="img/splat1.PNG">
+Note the splat effects!
 
 <img src="img/flat.PNG">
+What happens when too much energy is lost...
 
 <img src="img/shading.PNG">
+Note all the shading models and interesting textures!
 
 ## Techniques
 ### Paintballs
