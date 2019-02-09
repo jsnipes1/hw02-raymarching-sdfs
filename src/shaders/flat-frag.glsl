@@ -11,7 +11,7 @@ out vec4 out_Col;
 // Concept: Bouncing balls with various shaders (lambert, dielectric, normals)
   // Requirements:
     // BVH
-    // Intersection, subtraction, smooth blend -- combine all in one object
+    // Intersection, subtraction -- combine all in one object
     // Easing function x 1 -- use in background shading
     // dat.GUI x 2 (Number of balls, coeff of restitution)
 
@@ -43,12 +43,15 @@ float hash3D(vec3 x) {
 int randomShadingModel(vec3 n) {
   float r = hash3D(n);
   if (r < 0.33) {
+    // Lambert
     return 0;
   }
-  else if (r < 0.66) {
+  else if (r < 0.58) {
+    // Blinn-Phong
     return 1;
   }
   else {
+    // Normals
     return 2;
   }
 }
@@ -111,12 +114,7 @@ vec3 surfaceNormal(vec3 p, vec3 c, float r, vec4 floorNorm, int sdfToCall) {
   return normalize(n);
 }
 
-// From IQ; used to display multiple SDFs in one scene
-float opUnion( float d1, float d2 ) {  
-  return min(d1, d2);
-}
-
-// 3D noise; from my Noisy Terrain assignment
+// 3D noise
 float noise(vec3 p) {
   vec3 bCorner = floor(p);
   vec3 inCell = fract(p);
@@ -141,6 +139,7 @@ float noise(vec3 p) {
   return mix(b, f, inCell.x);
 }
 
+// 5-octave FBM
 float fbm(vec3 q) {
   float acc = 0.0;
   float freqScale = 2.0;
@@ -156,7 +155,7 @@ float fbm(vec3 q) {
   return acc;
 }
 
-// From IQ
+//////// From IQ ////////
 float pattern(in vec3 p) {
   vec3 q = vec3(fbm(p + vec3(0.0)),
                 fbm(p + vec3(5.2, 1.3, 2.8)),
@@ -165,10 +164,28 @@ float pattern(in vec3 p) {
   return fbm(p + 4.0 * q);
 }
 
- // From IQ
 vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
     return a + b * cos(6.28318 * (c * t + d));
 }
+
+// Used to display multiple SDFs in one scene
+float opUnion(float d1, float d2) {  
+  return min(d1, d2);
+}
+
+float opSmoothUnion(float d1, float d2, float k) {
+  float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
+  return mix(d2, d1, h) - k * h * (1.0 - h);
+}
+
+float opSubtraction(float d1, float d2) {
+  return max(-d1,d2);
+}
+
+float opIntersection(float d1, float d2) {
+  return max(d1,d2);
+}
+////////////////////////
 
 // A more interesting cloudy background
 vec4 computeBackgroundColor(Ray r, float time) {
@@ -182,7 +199,7 @@ vec4 computeBackgroundColor(Ray r, float time) {
 
 // Sphere marching algorithm
   // Source: http://jamie-wong.com/2016/07/15/ray-marching-signed-distance-functions/
-vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations, float t) {
+vec4 raymarch(Ray r, Ball balls[25], const float start, const int maxIterations, float t) {
   float depth = start;
 
   for (int i = 0; i < maxIterations; ++i) {
@@ -200,9 +217,9 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
       float tOffset = hash1D(float(j)) * 100.0;
 
       // Compute bounce height and horizontal move
-      b.center.y = bounce(t + tOffset, 0.99, 4.0, b.size);
+      b.center.y = bounce(t + tOffset, 0.99, 4.0, -b.size);
       // Reset x using mod to make the balls appear infinite
-      b.center.x = mod((t + tOffset) / 40.0, 4.2);
+      b.center.x = mod((t + tOffset) / 20.0, 6.25);
 
       float currDist = opUnion(minDist, sphereSDF(p, b.center, b.size));
       if (currDist < minDist) {
@@ -222,10 +239,13 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
     // Check distance to floor separately
     vec4 nFloor = normalize(vec4(0.0, 1.0, 0.0, 0.0));
     float toFloor = floorSDF(p, nFloor);
+    minDist = opSmoothUnion(minDist, 2.0 * toFloor, b.size * 3.0);
     if (toFloor < minDist) {
       shiftedX = 0.0;
       shiftedY = 0.0;
-      minDist = toFloor;
+      // Make the balls appear to squish into the floor
+      minDist = opUnion(toFloor, minDist);
+      // minDist = opSmoothUnion(minDist, 2.0 * toFloor, 1.0);
       sdfID = 1;
     }
 
@@ -263,15 +283,19 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
           color *= vec4(normalize(float(idx) * 2.0 * vec3(b.center.x, 1.0, b.center.z)), 1.0);
         }
       }
+      if (sdfID == 1) {
+        vec4 tempColor = computeBackgroundColor(r, t * 0.0001);
+        float lum = 0.2126 * tempColor.x + 0.7152 * tempColor.y + 0.0722 * tempColor.z;
+        color = vec4(vec3(lum), 1.0);
+      }
       return color;
     }
 
-    // We've yet to hit the sphere; continue marching
+    // We've yet to hit anything; continue marching
     depth += toShape;
   }
 
   // We miss the object entirely; return the background color
-  // return vec4(0.5 * (r.direction + vec3(1.0, 1.0, 1.0)), 1.0);
   return computeBackgroundColor(r, t * 0.0003);
 }
 
@@ -292,12 +316,12 @@ void main() {
   vec3 dir = normalize(p - u_Eye);
 
   // Create bouncing balls
-  const int nBalls = 20;
+  const int nBalls = 25;
   Ball ballArr[nBalls];
   for (float i = 0.0; i < float(nBalls); i += 1.0) {
     highp int idx = int(i);
     ballArr[idx] = Ball(vec4(hash3D(vec3(38.324 * i)) + 0.1, hash3D(vec3(10.4924 * i)) + 0.08, hash3D(vec3(102.521 * i)) + 0.1, 1.0),
-                        vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 4.0 * hash3D(vec3(59.3423 * i)) - 2.0),
+                        vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 8.0 * hash3D(vec3(59.3423 * i)) - 4.0),
                         hash3D(vec3(12.53892538 * i * i + 3452.31)) + 0.2,
                         randomShadingModel(vec3(95.3829 * i)));
     ballArr[idx].center += vec3(-2.0, 0.0, -2.0) * 4.0;
