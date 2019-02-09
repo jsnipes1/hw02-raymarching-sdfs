@@ -13,9 +13,9 @@ out vec4 out_Col;
     // BVH
     // Intersection, subtraction, smooth blend -- combine all in one object
     // Easing function x 1 -- use in background shading
-    // Noise -- use in background shading
     // dat.GUI x 2 (Number of balls, coeff of restitution)
 
+// Properties of each ball defined in the scene
 struct Ball {
   vec4 baseColor;
   vec3 center;
@@ -23,6 +23,7 @@ struct Ball {
   int reflectionModel;
 };
 
+// Properties of each ray cast into the scene
 struct Ray {
   vec3 origin;
   vec3 direction;
@@ -63,6 +64,7 @@ float sphereSDF(vec3 p, vec3 c, float r) {
   return length(p - c) - r;
 }
 
+// SDF for a plane; from IQ
 float floorSDF(vec3 p, vec4 n) {
   return dot(p, n.xyz) + n.w;
 }
@@ -114,6 +116,70 @@ float opUnion( float d1, float d2 ) {
   return min(d1, d2);
 }
 
+// 3D noise; from my Noisy Terrain assignment
+float noise(vec3 p) {
+  vec3 bCorner = floor(p);
+  vec3 inCell = fract(p);
+
+  float bLL = hash3D(bCorner);
+  float bUL = hash3D(bCorner + vec3(0.0, 0.0, 1.0));
+  float bLR = hash3D(bCorner + vec3(0.0, 1.0, 0.0));
+  float bUR = hash3D(bCorner + vec3(0.0, 1.0, 1.0));
+  float b0 = mix(bLL, bUL, inCell.z);
+  float b1 = mix(bLR, bUR, inCell.z);
+  float b = mix(b0, b1, inCell.y);
+
+  vec3 fCorner = bCorner + vec3(1.0, 0.0, 0.0);
+  float fLL = hash3D(fCorner);
+  float fUL = hash3D(fCorner + vec3(0.0, 0.0, 1.0));
+  float fLR = hash3D(fCorner + vec3(0.0, 1.0, 0.0));
+  float fUR = hash3D(fCorner + vec3(0.0, 1.0, 1.0));
+  float f0 = mix(fLL, fUL, inCell.z);
+  float f1 = mix(fLR, fUR, inCell.z);
+  float f = mix(f0, f1, inCell.y);
+
+  return mix(b, f, inCell.x);
+}
+
+float fbm(vec3 q) {
+  float acc = 0.0;
+  float freqScale = 2.0;
+  float invScale = 1.0 / freqScale;
+  float freq = 1.0;
+  float amp = 1.0;
+
+  for (int i = 0; i < 5; ++i) {
+    freq *= freqScale;
+    amp *= invScale;
+    acc += noise(q * freq) * amp;
+  }
+  return acc;
+}
+
+// From IQ
+float pattern(in vec3 p) {
+  vec3 q = vec3(fbm(p + vec3(0.0)),
+                fbm(p + vec3(5.2, 1.3, 2.8)),
+                fbm(p + vec3(1.2, 3.4, 1.2)));
+
+  return fbm(p + 4.0 * q);
+}
+
+ // From IQ
+vec3 palette(in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d) {
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
+// A more interesting cloudy background
+vec4 computeBackgroundColor(Ray r, float time) {
+  float t = pattern(r.direction * time);
+  vec3 a = vec3(-0.992, -0.212, 0.128);
+  vec3 b = vec3(1.328, 0.588, 0.318);
+  vec3 c = vec3(0.958, 0.478, 0.638);
+  vec3 d = vec3(-0.480, 0.908, 0.688);
+  return vec4(palette(t, a, b, c, d), 1.0) * vec4(0.6, 0.2, 0.7, 0.5);
+}
+
 // Sphere marching algorithm
   // Source: http://jamie-wong.com/2016/07/15/ray-marching-signed-distance-functions/
 vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations, float t) {
@@ -136,7 +202,7 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
       // Compute bounce height and horizontal move
       b.center.y = bounce(t + tOffset, 0.99, 4.0, b.size);
       // Reset x using mod to make the balls appear infinite
-      b.center.x = mod((t + tOffset) / 60.0, 4.0);
+      b.center.x = mod((t + tOffset) / 40.0, 4.2);
 
       float currDist = opUnion(minDist, sphereSDF(p, b.center, b.size));
       if (currDist < minDist) {
@@ -186,7 +252,7 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
         vec3 h = normalize(lHat - r.direction);
         float angle = max(dot(h, nHat), 0.0);
         float spec = pow(angle, 25.0);
-        vec4 specColor = vec4(1.0);
+        vec4 specColor = vec4(1.0); // Light color
         color += specColor * vec4(vec3(spec), 1.0) * intensity;
       }
       else if (b.reflectionModel == 2) {
@@ -205,7 +271,8 @@ vec4 raymarch(Ray r, Ball balls[20], const float start, const int maxIterations,
   }
 
   // We miss the object entirely; return the background color
-  return vec4(0.5 * (r.direction + vec3(1.0, 1.0, 1.0)), 1.0);
+  // return vec4(0.5 * (r.direction + vec3(1.0, 1.0, 1.0)), 1.0);
+  return computeBackgroundColor(r, t * 0.0003);
 }
 
 void main() {
@@ -230,9 +297,9 @@ void main() {
   for (float i = 0.0; i < float(nBalls); i += 1.0) {
     highp int idx = int(i);
     ballArr[idx] = Ball(vec4(hash3D(vec3(38.324 * i)) + 0.1, hash3D(vec3(10.4924 * i)) + 0.08, hash3D(vec3(102.521 * i)) + 0.1, 1.0),
-                      vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 4.0 * hash3D(vec3(59.3423 * i)) - 2.0),
-                      hash3D(vec3(12.53892538 * i * i + 3452.31)) + 0.2,
-                      randomShadingModel(vec3(95.3829 * i)));
+                        vec3(hash3D(vec3(2.538 * i)) + 10.0 * hash3D(vec3(12.53892538 * i)), 2.0 * hash3D(vec3(235.202 * i)), 4.0 * hash3D(vec3(59.3423 * i)) - 2.0),
+                        hash3D(vec3(12.53892538 * i * i + 3452.31)) + 0.2,
+                        randomShadingModel(vec3(95.3829 * i)));
     ballArr[idx].center += vec3(-2.0, 0.0, -2.0) * 4.0;
     ballArr[idx].size /= 3.0;
   }
